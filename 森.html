@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Forest</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background-color: #010601;
+            font-family: sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.4);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10;
+        }
+        #instructions {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #aaa;
+            font-size: 18px;
+            background: rgba(0,0,0,0.95);
+            z-index: 20;
+            text-align: center;
+            cursor: pointer;
+        }
+        .step-text {
+            font-size: 24px;
+            color: #fff;
+            margin: 20px 0;
+            font-weight: bold;
+            animation: blink 1.5s linear infinite;
+        }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+</head>
+<body>
+
+    <div id="crosshair"></div>
+
+    <div id="instructions">
+        <p style="font-size: 48px; color: #cc0000; margin: 0 0 10px 0; font-weight: bold; letter-spacing: 8px;">森</p>
+        <p class="step-text">画面をクリックして探索を開始</p>
+        <p style="font-size: 14px; color: #666; margin-top: 20px;">(移動: WASD / 走る: Q + WASD / 視点: マウス移動 / メニューに戻る: Esc)</p>
+    </div>
+
+    <script>
+        let gameStarted = false;
+        const instructions = document.getElementById('instructions');
+
+        instructions.addEventListener('click', () => {
+            document.body.requestFullscreen().then(() => {
+                document.body.requestPointerLock();
+            }).catch(() => {
+                document.body.requestPointerLock();
+            });
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === document.body) {
+                instructions.style.display = 'none';
+                gameStarted = true;
+            } else {
+                instructions.style.display = 'flex';
+                gameStarted = false;
+            }
+        });
+
+        let yaw = 0, pitch = 0;
+        const mouseSensitivity = 0.0025;
+
+        document.addEventListener('mousemove', (e) => {
+            if (!gameStarted) return;
+            yaw -= e.movementX * mouseSensitivity;
+            pitch -= e.movementY * mouseSensitivity;
+            pitch = Math.max(-Math.PI / 2.3, Math.min(Math.PI / 2.3, pitch));
+            camera.rotation.order = "YXZ";
+            camera.rotation.y = yaw;
+            camera.rotation.x = pitch;
+        });
+
+        // --- 3Dグラフィック設定 ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x010601);
+        scene.fog = new THREE.FogExp2(0x010601, 0.038); 
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 150); 
+        camera.position.set(0, 2.0, 0); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        function getDeterministicRandom(x, z) {
+            const val = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453123;
+            return val - Math.floor(val);
+        }
+
+        // レトロテクスチャ生成
+        function createRetroTexture(type) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64; 
+            const ctx = canvas.getContext('2d');
+            
+            if (type === 'grass') {
+                ctx.fillStyle = '#1c3d1e'; ctx.fillRect(0, 0, 64, 64);
+                for (let i = 0; i < 500; i++) {
+                    let gx = Math.random() * 64; let gy = Math.random() * 64;
+                    let length = Math.random() * 5 + 2;
+                    let greenNoise = 42 + Math.random() * 30;
+                    ctx.strokeStyle = `rgb(22, ${Math.floor(greenNoise)}, 25)`;
+                    ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + (Math.random() - 0.5) * 2, gy - length); ctx.stroke();
+                }
+            } else if (type === 'blood') {
+                ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0, 0, 64, 64); 
+                for (let i = 0; i < 60; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * 26 * (Math.random() > 0.3 ? 0.4 : 1.0);
+                    const cx = 32 + Math.cos(angle) * dist; const cy = 32 + Math.sin(angle) * dist;
+                    const size = Math.random() * 8.0 + 1.5; 
+                    const rNoise = Math.random() * 25;
+                    ctx.fillStyle = `rgb(${Math.floor(180 + rNoise)}, 5, 5)`; 
+                    ctx.beginPath(); ctx.arc(cx, cy, size, 0, Math.PI * 2); ctx.fill();
+                }
+            } else {
+                for (let x = 0; x < 64; x++) {
+                    for (let y = 0; y < 64; y++) {
+                        let r, g, b; const noise = Math.random() * 10;
+                        if (type === 'bark') { r = 45 + noise; g = 32 + noise; b = 22; } 
+                        else if (type === 'metal') { r = 60 + noise; g = 62 + noise; b = 65 + noise; }
+                        else { r = 18 + noise; g = 38 + noise; b = 22; }
+                        ctx.fillStyle = `rgb(${Math.floor(r)},${Math.floor(y*0.05 + g)},${Math.floor(b)})`; ctx.fillRect(x, y, 1, 1);
+                    }
+                }
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        }
+
+        const grassTexture = createRetroTexture('grass'); grassTexture.repeat.set(500, 500);
+        const barkTexture = createRetroTexture('bark'); 
+        const leavesTexture = createRetroTexture('leaves');
+        const metalTexture = createRetroTexture('metal');
+        const bloodTexture = createRetroTexture('blood'); 
+
+        const woodMat = new THREE.MeshLambertMaterial({ map: barkTexture });
+        const bloodMat = new THREE.MeshLambertMaterial({ map: bloodTexture, transparent: true, depthWrite: false });
+        const trunkMat = new THREE.MeshLambertMaterial({ map: barkTexture });
+        const leavesMat = new THREE.MeshLambertMaterial({ map: leavesTexture });
+
+        // 地面
+        const floorGeo = new THREE.PlaneGeometry(1500, 1500);
+        const floorMat = new THREE.MeshLambertMaterial({ map: grassTexture, emissive: new THREE.Color(0x021602) }); 
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2; scene.add(floor);
+
+        // ライト
+        const ambientLight = new THREE.AmbientLight(0x223522); scene.add(ambientLight);
+        const flashlight = new THREE.SpotLight(0xfffaed, 5.0, 90, Math.PI / 3.0, 0.6, 1);
+        scene.add(flashlight); scene.add(flashlight.target);
+
+        // 懐中電灯モデル
+        const flashlightGroup = new THREE.Group();
+        const metalMat = new THREE.MeshStandardMaterial({ map: metalTexture, roughness: 0.4, metalness: 0.8 });
+        const blackMetalMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+        const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const glassMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 });
+
+        const handleGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.32, 8);
+        const handle = new THREE.Mesh(handleGeo, metalMat); handle.rotation.x = Math.PI / 2; flashlightGroup.add(handle);
+        const headGeo = new THREE.CylinderGeometry(0.065, 0.035, 0.12, 8);
+        const head = new THREE.Mesh(headGeo, metalMat); head.rotation.x = Math.PI / 2; head.position.z = -0.16; flashlightGroup.add(head);
+        const rimGeo = new THREE.CylinderGeometry(0.068, 0.065, 0.02, 8);
+        const rim = new THREE.Mesh(rimGeo, blackMetalMat); rim.rotation.x = Math.PI / 2; rim.position.z = -0.22; flashlightGroup.add(rim);
+        const switchGeo = new THREE.BoxGeometry(0.012, 0.012, 0.03);
+        const pSwitch = new THREE.Mesh(switchGeo, blackMetalMat); pSwitch.position.set(0, 0.038, -0.05); flashlightGroup.add(pSwitch);
+        const bulbGeo = new THREE.SphereGeometry(0.012, 6, 6);
+        const bulb = new THREE.Mesh(bulbGeo, bulbMat); bulb.position.z = -0.19; flashlightGroup.add(bulb);
+        const lensGeo = new THREE.CircleGeometry(0.06, 8);
+        const lens = new THREE.Mesh(lensGeo, glassMat); lens.position.z = -0.221; flashlightGroup.add(lens);
+
+        flashlightGroup.position.set(0.18, -0.22, -0.42);
+        camera.add(flashlightGroup); scene.add(camera);
+
+        // 木のモデル
+        const trunkGeo = new THREE.CylinderGeometry(0.15, 0.4, 7, 8);
+        function createTreeMesh() {
+            const group = new THREE.Group();
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat); trunk.position.y = 3.5; group.add(trunk);
+            const layers = [{ r: 2.5, h: 3.5, y: 5 }, { r: 1.8, h: 2.8, y: 7 }, { r: 1.0, h: 2.0, y: 8.5 }];
+            layers.forEach(layer => {
+                const leavesGeo = new THREE.ConeGeometry(layer.r, layer.h, 5);
+                const leaves = new THREE.Mesh(leavesGeo, leavesMat); leaves.position.y = layer.y;
+                group.add(leaves);
+            });
+            return group;
+        }
+
+        // 木造ハウスモデル
+        function createHouseMesh(hasFloorBlood, hasWallBlood) {
+            const houseGroup = new THREE.Group();
+            const wallThickness = 0.3; const wallHeight = 4.0;
+
+            const houseFloorGeo = new THREE.PlaneGeometry(5.7, 5.7);
+            const houseFloor = new THREE.Mesh(houseFloorGeo, woodMat);
+            houseFloor.rotation.x = -Math.PI / 2;
+            houseFloor.position.set(0, 0.02, 0); 
+            houseGroup.add(houseFloor);
+
+            const leftWall = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallHeight, 6), woodMat); leftWall.position.set(-3, wallHeight/2, 0); houseGroup.add(leftWall);
+            const rightWall = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallHeight, 6), woodMat); rightWall.position.set(3, wallHeight/2, 0); houseGroup.add(rightWall);
+            const backWall = new THREE.Mesh(new THREE.BoxGeometry(6, wallHeight, wallThickness), woodMat); backWall.position.set(0, wallHeight/2, -3); houseGroup.add(backWall);
+            
+            const frontWallLeft = new THREE.Mesh(new THREE.BoxGeometry(1.85, wallHeight, wallThickness), woodMat); frontWallLeft.position.set(-2.075, wallHeight/2, 3); houseGroup.add(frontWallLeft);
+            const frontWallRight = new THREE.Mesh(new THREE.BoxGeometry(1.85, wallHeight, wallThickness), woodMat); frontWallRight.position.set(2.075, wallHeight/2, 3); houseGroup.add(frontWallRight);
+
+            const roofGeo = new THREE.ConeGeometry(5.0, 2.5, 4);
+            const roof = new THREE.Mesh(roofGeo, woodMat); roof.position.y = wallHeight + 1.25; roof.rotation.y = Math.PI / 4; houseGroup.add(roof);
+
+            if (hasFloorBlood) {
+                const floorBloodGeo = new THREE.PlaneGeometry(4.8, 4.8);
+                const floorBlood = new THREE.Mesh(floorBloodGeo, bloodMat);
+                floorBlood.rotation.x = -Math.PI / 2;
+                floorBlood.position.set(0, 0.03, 0); 
+                houseGroup.add(floorBlood);
+            }
+
+            if (hasWallBlood) {
+                const wallBloodGeo = new THREE.PlaneGeometry(3.8, 3.2);
+                const wallBlood = new THREE.Mesh(wallBloodGeo, bloodMat);
+                wallBlood.rotation.y = -Math.PI / 2; 
+                wallBlood.position.set(2.84, 1.8, 0); 
+                houseGroup.add(wallBlood);
+            }
+
+            return houseGroup;
+        }
+
+        // マップ・生成システム
+        const activeChunks = new Map(); 
+        const chunkSize = 60; 
+        const viewDistance = 2; 
+
+        // 💥 【新機能】最初の進行方向を記録する変数群
+        let firstVillageSpawned = false;
+        let firstVillageChunkX = null;
+        let firstVillageChunkZ = null;
+
+        function checkIsVillageChunk(cx, cz) {
+            // 💥 【修正】1つ目の村がまだ確定していない場合
+            if (!firstVillageSpawned) {
+                // プレイヤーの現在の移動距離を計算
+                const dist = Math.sqrt(camera.position.x * camera.position.x + camera.position.z * camera.position.z);
+                
+                // 200メートル(誤差を考慮して190m以上)進んだとき、現在プレイヤーがいるチャンクを「最初の村」として確定させる！
+                if (dist >= 190) {
+                    firstVillageSpawned = true;
+                    firstVillageChunkX = cx;
+                    firstVillageChunkZ = cz;
+                    return true;
+                }
+                return false; 
+            }
+
+            // 1つ目の村に決定した座標であれば常に村を出す
+            if (cx === firstVillageChunkX && cz === firstVillageChunkZ) {
+                return true;
+            }
+
+            // 💥 【修正】2つ目以降は完全な「ランダム生成(確率8%)」に戻す
+            const worldX = cx * chunkSize;
+            const worldZ = cz * chunkSize;
+            const distanceFromStart = Math.sqrt(worldX * worldX + worldZ * worldZ);
+            
+            // スタート地点(半径140m以内)には2つ目は出現させない
+            if (distanceFromStart < 140) return false;
+
+            const rand = getDeterministicRandom(cx, cz);
+            return rand < 0.08; 
+        }
+
+        function generateChunk(cx, cz) {
+            const chunkKey = `${cx},${cz}`; if (activeChunks.has(chunkKey)) return;
+
+            const chunkObjects = [];
+            const isVillage = checkIsVillageChunk(cx, cz);
+
+            const isSpawnSafeZone = (cx === 0 && cz === 0);
+
+            if (isVillage) {
+                const housePositions = [{ x: -12, z: -10 }, { x: 12, z: -12 }, { x: -10, z: 12 }, { x: 14, z: 10 }];
+                housePositions.forEach((pos, index) => {
+                    const bloodRand = getDeterministicRandom(cx + index * 4, cz - index * 9);
+                    const hasFloorBlood = (bloodRand < 0.25); 
+                    const hasWallBlood = (bloodRand < 0.10); 
+
+                    const house = createHouseMesh(hasFloorBlood, hasWallBlood);
+                    const rx = getDeterministicRandom(cx + index, cz + pos.x);
+                    const rz = getDeterministicRandom(cx - index, cz - pos.z);
+                    
+                    // 1つ目の村だけはプレイヤーの目の前にバチッと出すためにズレを無くす
+                    const isFirstVillageChunk = (cx === firstVillageChunkX && cz === firstVillageChunkZ);
+                    const jitter = isFirstVillageChunk ? 0 : 1;
+
+                    const tx = cx * chunkSize + pos.x + (rx - 0.5) * 2 * jitter;
+                    const tz = cz * chunkSize + pos.z + (rz - 0.5) * 2 * jitter;
+                    
+                    house.position.set(tx, 0, tz);
+                    const rotIndex = Math.floor(rx * 4);
+                    house.rotation.y = rotIndex * (Math.PI / 2);
+
+                    house.userData = { 
+                        isHouse: true, 
+                        tx: tx,
+                        tz: tz,
+                        rotIndex: rotIndex 
+                    };
+
+                    scene.add(house); chunkObjects.push(house);
+                });
+            }
+
+            // 森（木）の配置
+            if (!isSpawnSafeZone) {
+                const gridCount = 4; 
+                const step = chunkSize / gridCount;
+                for (let gx = 0; gx < gridCount; gx++) {
+                    for (let gz = 0; gz < gridCount; gz++) {
+                        const localX = (gx * step + step / 2) - chunkSize / 2;
+                        const localZ = (gz * step + step / 2) - chunkSize / 2;
+
+                        if (isVillage && Math.sqrt(localX * localX + localZ * localZ) < 24) continue; 
+
+                        const tree = createTreeMesh();
+                        tree.userData = { isTree: true, radius: 0.5 };
+                        
+                        const rx = getDeterministicRandom(cx + gx, cz + gz);
+                        const rz = getDeterministicRandom(cx - gx, cz - gz);
+                        const jitterX = (rx - 0.5) * (step * 0.6); 
+                        const jitterZ = (rz - 0.5) * (step * 0.6);
+                        
+                        const tx = cx * chunkSize + (gx * step + step / 2) + jitterX - chunkSize / 2;
+                        const tz = cz * chunkSize + (gz * step + step / 2) + jitterZ - chunkSize / 2;
+
+                        // 最初に出現する村のど真ん中に木が被らないように避ける
+                        if (cx === firstVillageChunkX && cz === firstVillageChunkZ && Math.sqrt(tx*tx + tz*tz) < 20) continue;
+
+                        tree.position.set(tx, 0, tz);
+                        scene.add(tree); chunkObjects.push(tree);
+                    }
+                }
+            }
+            activeChunks.set(chunkKey, chunkObjects);
+        }
+
+        function updateMap() {
+            const pCx = Math.floor((camera.position.x + chunkSize/2) / chunkSize); 
+            const pCz = Math.floor((camera.position.z + chunkSize/2) / chunkSize);
+            
+            for (let x = -viewDistance; x <= viewDistance; x++) {
+                for (let z = -viewDistance; z <= viewDistance; z++) { generateChunk(pCx + x, pCz + z); }
+            }
+            
+            for (let [key, objects] of activeChunks) {
+                const [cx, cz] = key.split(',').map(Number);
+                const isFar = Math.abs(cx - pCx) > viewDistance || Math.abs(cz - pCz) > viewDistance;
+                objects.forEach(obj => { obj.visible = !isFar; });
+            }
+        }
+
+        const keys = { w: false, a: false, s: false, d: false, q: false };
+        let walkTimer = 0;
+
+        document.addEventListener('keydown', (e) => { if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = true; });
+        document.addEventListener('keyup', (e) => { if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = false; });
+
+        function checkRotatedWallCollision(px, pz, hx, hz, rotIndex, localX, localZ, sizeX, sizeZ) {
+            let dx = px - hx; let dz = pz - hz;
+            let rx = dx; let rz = dz;
+            
+            if (rotIndex === 1) { rx = -dz; rz = dx; } 
+            else if (rotIndex === 2) { rx = -dx; rz = -dz; } 
+            else if (rotIndex === 3) { rx = dz; rz = -dx; }
+            
+            let playerRadius = 0.32; 
+            if (rx > localX - sizeX/2 - playerRadius && rx < localX + sizeX/2 + playerRadius &&
+                rz > localZ - sizeZ/2 - playerRadius && rz < localZ + sizeZ/2 + playerRadius) {
+                return true; 
+            }
+            return false;
+        }
+
+        let lastTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = performance.now();
+            const delta = (time - lastTime) / 1000;
+            lastTime = time;
+
+            let isMoving = false;
+            let isSprinting = false;
+
+            if (gameStarted) {
+                isSprinting = keys.q;
+                let currentSpeed = isSprinting ? 0.18 : 0.12; 
+
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion); forward.y = 0; forward.normalize();
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion); right.y = 0; right.normalize();
+                
+                let moveDirection = new THREE.Vector3();
+                if (keys.w) moveDirection.add(forward); if (keys.s) moveDirection.add(forward.clone().negate());
+                if (keys.d) moveDirection.add(right); if (keys.a) moveDirection.add(right.clone().negate());
+
+                if (moveDirection.lengthSq() > 0) {
+                    isMoving = true;
+                    moveDirection.normalize().multiplyScalar(currentSpeed);
+                    let nextX = camera.position.x + moveDirection.x; 
+                    let nextZ = camera.position.z + moveDirection.z;
+                    let collision = false;
+
+                    for (let [key, objects] of activeChunks) {
+                        for (let i = 0; i < objects.length; i++) {
+                            const obj = objects[i]; if (!obj.visible) continue;
+                            
+                            if (obj.userData.isHouse) {
+                                const hx = obj.userData.tx; const hz = obj.userData.tz; const rIdx = obj.userData.rotIndex;
+                                if (
+                                    checkRotatedWallCollision(nextX, nextZ, hx, hz, rIdx, -3.0,  0.0, 0.3, 6.0) ||  
+                                    checkRotatedWallCollision(nextX, nextZ, hx, hz, rIdx,  3.0,  0.0, 0.3, 6.0) ||  
+                                    checkRotatedWallCollision(nextX, nextZ, hx, hz, rIdx,  0.0, -3.0, 6.0, 0.3) ||  
+                                    checkRotatedWallCollision(nextX, nextZ, hx, hz, rIdx, -2.075, 3.0, 1.85, 0.3) || 
+                                    checkRotatedWallCollision(nextX, nextZ, hx, hz, rIdx,  2.075, 3.0, 1.85, 0.3)    
+                                ) {
+                                    collision = true; break;
+                                }
+                            }
+
+                            if (obj.userData.isTree) {
+                                const dx = nextX - obj.position.x; const dz = nextZ - obj.position.z;
+                                if (Math.sqrt(dx*dx + dz*dz) < obj.userData.radius) { collision = true; break; }
+                            } 
+                        }
+                        if (collision) break;
+                    }
+
+                    if (!collision) { camera.position.x = nextX; camera.position.z = nextZ; }
+                }
+                camera.position.y = 2.0; 
+                updateMap();
+            }
+            
+            if (isMoving && gameStarted) {
+                let speedFactor = isSprinting ? 0.19 : 0.11; 
+                let shakeAmountX = isSprinting ? 0.018 : 0.014; 
+                let shakeAmountY = isSprinting ? 0.018 : 0.014; 
+                walkTimer += speedFactor;
+                flashlightGroup.position.x = 0.18 + Math.sin(walkTimer) * shakeAmountX;
+                flashlightGroup.position.y = -0.22 + Math.abs(Math.cos(walkTimer)) * shakeAmountY;
+            } else {
+                walkTimer += 0.02;
+                flashlightGroup.position.x = 0.18 + Math.sin(walkTimer) * 0.003;
+                flashlightGroup.position.y = -0.22 + Math.cos(walkTimer * 0.5) * 0.005;
+            }
+
+            flashlight.position.copy(camera.position);
+            const targetPosition = camera.position.clone().add(new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion));
+            flashlight.target.position.copy(targetPosition);
+            
+            renderer.render(scene, camera);
+        }
+
+        updateMap();
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
